@@ -1,0 +1,1399 @@
+<!DOCTYPE html>
+<html lang="en" class="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MedTwin WardOS — Hospital Patient-Room &amp; Capacity Digital Twin</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] }
+        }
+      }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    body { font-family: 'Inter', system-ui, sans-serif; }
+    @keyframes pulseRing {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.45; }
+    }
+    .pulse-critical { animation: pulseRing 1.4s ease-in-out infinite; }
+    .room-card-svg { cursor: pointer; transition: transform 0.15s ease, filter 0.15s ease; }
+    .room-card-svg:hover { filter: brightness(1.06); }
+    /* Custom thin scrollbar */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, 0.45); border-radius: 9999px; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 transition-colors duration-200 min-h-screen">
+
+  <!-- Toast Container -->
+  <div id="toastContainer" class="fixed bottom-4 right-4 z-50 flex flex-col gap-2 max-w-sm pointer-events-none"></div>
+
+  <!-- Top Navigation & Command Bar -->
+  <header class="sticky top-0 z-30 bg-white/90 dark:bg-slate-900/90 backdrop-blur border-b border-slate-200 dark:border-slate-800">
+    <div class="max-w-[1440px] mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-lg bg-teal-600 text-white flex items-center justify-center shadow-sm">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M22 12h-4l-3 9L9 3l-3 9H2" />
+          </svg>
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <h1 class="text-base sm:text-lg font-bold tracking-tight">MedTwin WardOS</h1>
+            <span id="simStatusBadge" class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300">
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+              LIVE TWIN
+            </span>
+          </div>
+          <p class="text-xs text-slate-500 dark:text-slate-400">Acute Care Patient-Room, Environmental &amp; Bed Capacity Digital Twin (NEWS2 Standard)</p>
+        </div>
+      </div>
+
+      <!-- Simulation Clock & Controls -->
+      <div class="flex flex-wrap items-center gap-2">
+        <div class="px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-xs font-mono flex items-center gap-2 border border-slate-200 dark:border-slate-700">
+          <span class="text-slate-500 dark:text-slate-400">WARD TIME</span>
+          <span id="simClock" class="font-semibold">08:00</span>
+          <span class="text-slate-400">|</span>
+          <span id="simTickLabel" class="text-slate-500 dark:text-slate-400">Tick 0</span>
+        </div>
+
+        <button id="btnPlayPause" class="px-3 py-1.5 rounded-lg bg-teal-600 hover:bg-teal-700 text-white text-xs font-semibold flex items-center gap-1.5 transition">
+          <span id="playPauseIcon">❚❚</span>
+          <span id="playPauseText">Pause</span>
+        </button>
+        <button id="btnStep" class="px-2.5 py-1.5 rounded-lg bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-xs font-medium transition" title="Advance 1 minute">
+          +1m Step
+        </button>
+        <select id="speedSelect" aria-label="Simulation speed" class="px-2.5 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-medium">
+          <option value="1500">1x Speed</option>
+          <option value="750">2x Speed</option>
+          <option value="300">5x Speed</option>
+        </select>
+        <button id="btnReset" class="px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-medium transition">
+          Reset
+        </button>
+
+        <div class="h-5 w-px bg-slate-200 dark:bg-slate-700 mx-0.5 hidden sm:block"></div>
+
+        <!-- Data Import / Export -->
+        <input type="file" id="fileImportInput" accept=".csv,.json" class="hidden" />
+        <button id="btnImportData" class="px-2.5 py-1.5 rounded-lg bg-indigo-50 text-indigo-700 hover:bg-indigo-100 dark:bg-indigo-950/60 dark:text-indigo-300 dark:hover:bg-indigo-900/60 border border-indigo-200 dark:border-indigo-800 text-xs font-medium transition">
+          Import CSV/JSON
+        </button>
+        <button id="btnExportCSV" class="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-xs font-medium transition">
+          Export CSV
+        </button>
+        <button id="btnExportJSON" class="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-xs font-medium transition">
+          Export JSON
+        </button>
+
+        <!-- Light / Dark Mode Toggle -->
+        <button id="btnThemeToggle" class="p-2 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 transition" title="Toggle Light / Dark Mode" aria-label="Toggle Light or Dark Mode">
+          <span id="themeIcon">🌙</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Scenario Selector Bar -->
+    <div class="max-w-[1440px] mx-auto px-4 pb-2.5 flex flex-wrap items-center justify-between gap-2">
+      <div class="flex flex-wrap items-center gap-1.5">
+        <span class="text-xs font-semibold uppercase tracking-wider text-slate-400 mr-1">Scenarios:</span>
+        <button data-scenario="normal" class="scenario-btn px-3 py-1 rounded-full text-xs font-medium transition">Normal Operations</button>
+        <button data-scenario="surge" class="scenario-btn px-3 py-1 rounded-full text-xs font-medium transition">ER Mass Surge</button>
+        <button data-scenario="hvac_fault" class="scenario-btn px-3 py-1 rounded-full text-xs font-medium transition">HVAC / Isolation Fault</button>
+        <button data-scenario="sepsis" class="scenario-btn px-3 py-1 rounded-full text-xs font-medium transition">Respiratory / Sepsis Spike</button>
+        <button data-scenario="night_shift" class="scenario-btn px-3 py-1 rounded-full text-xs font-medium transition">Night-Shift Staffing Crunch</button>
+      </div>
+      <button id="btnLoadSampleCSV" class="text-xs text-teal-600 dark:text-teal-400 hover:underline font-medium">
+        + Download Sample Import CSV
+      </button>
+    </div>
+  </header>
+
+  <main class="max-w-[1440px] mx-auto px-4 py-4 space-y-4">
+
+    <!-- Top KPI Strip -->
+    <section class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div class="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
+        <div class="text-xs text-slate-500 dark:text-slate-400 font-medium">Bed Occupancy</div>
+        <div class="mt-1 flex items-baseline justify-between">
+          <span id="kpiOccupancy" class="text-xl font-bold">75%</span>
+          <span id="kpiOccupancySub" class="text-xs text-slate-500 dark:text-slate-400">6 / 8 beds</span>
+        </div>
+        <div class="mt-2 h-1.5 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+          <div id="kpiOccupancyBar" class="h-full bg-teal-500 transition-all duration-300" style="width: 75%"></div>
+        </div>
+      </div>
+
+      <div class="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
+        <div class="text-xs text-slate-500 dark:text-slate-400 font-medium">Active Alerts</div>
+        <div class="mt-1 flex items-baseline justify-between">
+          <span id="kpiAlerts" class="text-xl font-bold text-rose-600 dark:text-rose-400">0</span>
+          <span id="kpiAlertsSub" class="text-xs text-slate-500 dark:text-slate-400">0 critical</span>
+        </div>
+        <div id="kpiAlertsBadge" class="mt-2 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">All rooms nominal</div>
+      </div>
+
+      <div class="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
+        <div class="text-xs text-slate-500 dark:text-slate-400 font-medium">Mean Ward NEWS2</div>
+        <div class="mt-1 flex items-baseline justify-between">
+          <span id="kpiNews2" class="text-xl font-bold">2.4</span>
+          <span id="kpiNews2Tier" class="text-xs px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300 font-medium">Low</span>
+        </div>
+        <div class="mt-2 text-[11px] text-slate-500 dark:text-slate-400">RCP 0–20 acuity scale</div>
+      </div>
+
+      <div class="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
+        <div class="text-xs text-slate-500 dark:text-slate-400 font-medium">Nurse Workload</div>
+        <div class="mt-1 flex items-baseline justify-between">
+          <span id="kpiWorkload" class="text-xl font-bold">62%</span>
+          <span id="kpiRatio" class="text-xs text-slate-500 dark:text-slate-400">1 : 1.0 RN</span>
+        </div>
+        <div class="mt-2 h-1.5 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+          <div id="kpiWorkloadBar" class="h-full bg-indigo-500 transition-all duration-300" style="width: 62%"></div>
+        </div>
+      </div>
+
+      <div class="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
+        <div class="text-xs text-slate-500 dark:text-slate-400 font-medium">Isolation Compliance</div>
+        <div class="mt-1 flex items-baseline justify-between">
+          <span id="kpiIsolation" class="text-xl font-bold">100%</span>
+          <span id="kpiIsolationSub" class="text-xs text-slate-500 dark:text-slate-400">2 / 2 Neg-P</span>
+        </div>
+        <div class="mt-2 text-[11px] text-slate-500 dark:text-slate-400">Target ≤ -2.5 Pa, ≥ 12 ACH</div>
+      </div>
+
+      <div class="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
+        <div class="text-xs text-slate-500 dark:text-slate-400 font-medium">Est. Response Time</div>
+        <div class="mt-1 flex items-baseline justify-between">
+          <span id="kpiResponse" class="text-xl font-bold">1.8m</span>
+          <span class="text-xs text-slate-500 dark:text-slate-400">SLA &lt; 3.0m</span>
+        </div>
+        <div id="kpiResponseStatus" class="mt-2 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">Within clinical SLA</div>
+      </div>
+    </section>
+
+    <!-- Main Dashboard Grid -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
+
+      <!-- Left/Center Column (8 cols): Interactive Floor Plan + Charts -->
+      <div class="lg:col-span-8 space-y-4">
+
+        <!-- Interactive Ward Floor Plan Digital Twin -->
+        <div class="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm p-4">
+          <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+            <div>
+              <h2 class="text-sm font-bold">Interactive Ward Floor Plan — North Acute Wing (8 Beds)</h2>
+              <p class="text-xs text-slate-500 dark:text-slate-400">Click any room to inspect live telemetry, vitals, and send twin control commands</p>
+            </div>
+            <div class="flex flex-wrap items-center gap-3 text-[11px] font-medium">
+              <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm bg-emerald-500"></span> Stable (NEWS2 0–4)</span>
+              <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm bg-amber-500"></span> Medium (5–6)</span>
+              <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm bg-rose-500"></span> High / Alert (≥7)</span>
+              <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm bg-slate-400"></span> Vacant</span>
+            </div>
+          </div>
+
+          <!-- SVG Digital Twin Floor Plan -->
+          <div class="w-full overflow-x-auto">
+            <svg id="wardFloorSvg" viewBox="0 0 840 370" class="w-full h-auto min-w-[600px] select-none rounded-lg bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+              <!-- Corridor & Nurse Station -->
+              <rect x="20" y="152" width="800" height="66" rx="8" class="fill-slate-200/80 dark:fill-slate-800/70" />
+              <rect x="330" y="160" width="180" height="50" rx="8" class="fill-teal-600/15 dark:fill-teal-500/20 stroke-teal-500" stroke-width="1.5" stroke-dasharray="4 3" />
+              <text x="420" y="182" text-anchor="middle" class="fill-teal-800 dark:fill-teal-300 text-[11px] font-bold">CENTRAL NURSE STATION</text>
+              <text id="svgNurseCount" x="420" y="198" text-anchor="middle" class="fill-slate-600 dark:fill-slate-300 text-[10px]">6 RNs Active • Telemetry Sync OK</text>
+
+              <!-- Room Containers rendered dynamically by JS -->
+              <g id="svgRoomsLayer"></g>
+            </svg>
+          </div>
+        </div>
+
+        <!-- Real-Time Telemetry Charts -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div class="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm p-4">
+            <div class="flex items-center justify-between mb-2">
+              <h3 class="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300">Ward Occupancy &amp; Alert Load</h3>
+              <span class="text-[11px] text-slate-400">Last 20 ticks</span>
+            </div>
+            <div class="relative h-60">
+              <canvas id="wardChart"></canvas>
+            </div>
+          </div>
+
+          <div class="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm p-4">
+            <div class="flex items-center justify-between mb-2">
+              <h3 id="roomChartTitle" class="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300">Room 101 Vitals Trend</h3>
+              <span class="text-[11px] text-slate-400">HR (bpm) &amp; SpO₂ (%)</span>
+            </div>
+            <div class="relative h-60">
+              <canvas id="roomChart"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- Room Summary Matrix Table -->
+        <div class="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm p-4">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="text-sm font-bold">Live Bed &amp; Environmental Telemetry Matrix</h3>
+            <span class="text-xs text-slate-500 dark:text-slate-400">Click row to select room</span>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs">
+              <thead>
+                <tr class="border-b border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400">
+                  <th class="py-2 pr-3 font-semibold">Room</th>
+                  <th class="py-2 pr-3 font-semibold">Patient</th>
+                  <th class="py-2 pr-3 font-semibold">NEWS2</th>
+                  <th class="py-2 pr-3 font-semibold">HR</th>
+                  <th class="py-2 pr-3 font-semibold">SpO₂</th>
+                  <th class="py-2 pr-3 font-semibold">Temp</th>
+                  <th class="py-2 pr-3 font-semibold">Room Env</th>
+                  <th class="py-2 font-semibold">Status</th>
+                </tr>
+              </thead>
+              <tbody id="roomTableBody" class="divide-y divide-slate-100 dark:divide-slate-800"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Column (4 cols): Management Controls, Inspector, Governance & Log -->
+      <div class="lg:col-span-4 space-y-4">
+
+        <!-- Management & Governance Simulation Controls -->
+        <div class="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm p-4 space-y-3.5">
+          <h2 class="text-sm font-bold flex items-center justify-between">
+            <span>Management &amp; Policy Controls</span>
+            <span class="text-[11px] font-normal text-slate-400">Live Parameters</span>
+          </h2>
+
+          <div>
+            <div class="flex justify-between text-xs mb-1">
+              <label for="sliderNurses" class="font-medium">Nurses on Shift (RNs)</label>
+              <span id="valNurses" class="font-bold text-teal-600 dark:text-teal-400">6 RNs</span>
+            </div>
+            <input id="sliderNurses" type="range" min="2" max="8" step="1" value="6" class="w-full accent-teal-600" />
+          </div>
+
+          <div>
+            <div class="flex justify-between text-xs mb-1">
+              <label for="sliderAdmission" class="font-medium">ER Admission Pressure</label>
+              <span id="valAdmission" class="font-bold text-indigo-600 dark:text-indigo-400">20%</span>
+            </div>
+            <input id="sliderAdmission" type="range" min="0" max="100" step="10" value="20" class="w-full accent-indigo-600" />
+          </div>
+
+          <div>
+            <span class="block text-xs font-medium mb-1.5">Ward HVAC &amp; Pressure Mode</span>
+            <div class="grid grid-cols-3 gap-1.5">
+              <button data-hvac="nominal" class="hvac-btn py-1.5 px-2 rounded-lg text-xs font-medium border transition">Nominal</button>
+              <button data-hvac="boost" class="hvac-btn py-1.5 px-2 rounded-lg text-xs font-medium border transition">Iso Boost</button>
+              <button data-hvac="fault" class="hvac-btn py-1.5 px-2 rounded-lg text-xs font-medium border transition">HVAC Fault</button>
+            </div>
+          </div>
+
+          <div class="flex items-center justify-between pt-1">
+            <span class="text-xs font-medium">Strict Alert Threshold (NEWS2 ≥ 4)</span>
+            <button id="btnStrictThreshold" role="switch" aria-checked="false" class="w-10 h-5 rounded-full bg-slate-300 dark:bg-slate-700 relative transition-colors">
+              <span id="strictThumb" class="block w-4 h-4 rounded-full bg-white shadow transform translate-x-0.5 transition-transform"></span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Selected Room & Patient Digital Twin Inspector -->
+        <div class="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm p-4 space-y-3">
+          <div class="flex items-center justify-between">
+            <div>
+              <h2 id="inspectorTitle" class="text-sm font-bold">Room 101 — High-Dependency</h2>
+              <p id="inspectorSubtitle" class="text-xs text-slate-500 dark:text-slate-400">Patient P-401 • Post-Op Thoracic</p>
+            </div>
+            <span id="inspectorNews2Badge" class="px-2.5 py-1 rounded-lg text-xs font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300">NEWS2: 1</span>
+          </div>
+
+          <div id="inspectorOccupiedBody" class="space-y-3">
+            <!-- Vitals Grid -->
+            <div class="grid grid-cols-3 gap-2 text-center">
+              <div class="p-2 rounded-lg bg-slate-50 dark:bg-slate-800/70 border border-slate-200/70 dark:border-slate-700/70">
+                <div class="text-[10px] text-slate-500 dark:text-slate-400">Heart Rate</div>
+                <div id="insHR" class="text-sm font-bold">78 bpm</div>
+              </div>
+              <div class="p-2 rounded-lg bg-slate-50 dark:bg-slate-800/70 border border-slate-200/70 dark:border-slate-700/70">
+                <div class="text-[10px] text-slate-500 dark:text-slate-400">SpO₂</div>
+                <div id="insSpO2" class="text-sm font-bold">97%</div>
+              </div>
+              <div class="p-2 rounded-lg bg-slate-50 dark:bg-slate-800/70 border border-slate-200/70 dark:border-slate-700/70">
+                <div class="text-[10px] text-slate-500 dark:text-slate-400">Sys BP</div>
+                <div id="insSBP" class="text-sm font-bold">122 mmHg</div>
+              </div>
+              <div class="p-2 rounded-lg bg-slate-50 dark:bg-slate-800/70 border border-slate-200/70 dark:border-slate-700/70">
+                <div class="text-[10px] text-slate-500 dark:text-slate-400">Resp Rate</div>
+                <div id="insRR" class="text-sm font-bold">16 /min</div>
+              </div>
+              <div class="p-2 rounded-lg bg-slate-50 dark:bg-slate-800/70 border border-slate-200/70 dark:border-slate-700/70">
+                <div class="text-[10px] text-slate-500 dark:text-slate-400">Body Temp</div>
+                <div id="insTemp" class="text-sm font-bold">36.8°C</div>
+              </div>
+              <div class="p-2 rounded-lg bg-slate-50 dark:bg-slate-800/70 border border-slate-200/70 dark:border-slate-700/70">
+                <div class="text-[10px] text-slate-500 dark:text-slate-400">O₂ / ACVPU</div>
+                <div id="insO2" class="text-sm font-bold">Air • A</div>
+              </div>
+            </div>
+
+            <!-- Room Environment -->
+            <div class="p-2.5 rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex flex-wrap items-center justify-between gap-2 text-xs">
+              <span>Env: <strong id="insEnvTemp">21.5°C</strong> • <strong id="insEnvHum">45% RH</strong></span>
+              <span>Pressure: <strong id="insEnvPress">-3.2 Pa</strong> (<span id="insEnvACH">14 ACH</span>)</span>
+            </div>
+
+            <!-- Direct Twin Commands -->
+            <div class="grid grid-cols-2 gap-2">
+              <button id="btnDispatchRN" class="px-2.5 py-2 rounded-lg bg-teal-600 hover:bg-teal-700 text-white text-xs font-semibold transition">
+                Dispatch RN &amp; Stabilize
+              </button>
+              <button id="btnToggleO2" class="px-2.5 py-2 rounded-lg bg-sky-600 hover:bg-sky-700 text-white text-xs font-semibold transition">
+                Toggle Supp. O₂
+              </button>
+              <button id="btnCoolRoom" class="px-2.5 py-1.5 rounded-lg bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-xs font-medium transition">
+                Adjust HVAC (-1°C)
+              </button>
+              <button id="btnDischarge" class="px-2.5 py-1.5 rounded-lg bg-rose-50 text-rose-700 hover:bg-rose-100 dark:bg-rose-950/60 dark:text-rose-300 border border-rose-200 dark:border-rose-800 text-xs font-medium transition">
+                Discharge / Transfer
+              </button>
+            </div>
+          </div>
+
+          <div id="inspectorVacantBody" class="hidden py-4 text-center space-y-3">
+            <p class="text-xs text-slate-500 dark:text-slate-400">Bed is clean, sanitized, and ready for incoming ER or post-op admission.</p>
+            <button id="btnAdmitHere" class="px-4 py-2 rounded-lg bg-teal-600 hover:bg-teal-700 text-white text-xs font-semibold transition">
+              + Admit Simulated Patient
+            </button>
+          </div>
+        </div>
+
+        <!-- Governance & Decision Support Recommendations -->
+        <div class="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm p-4 space-y-2.5">
+          <h2 class="text-sm font-bold">Governance &amp; Decision Support</h2>
+          <div id="governanceList" class="space-y-2 text-xs"></div>
+        </div>
+
+        <!-- Live Event & Alert Log -->
+        <div class="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm p-4">
+          <div class="flex items-center justify-between mb-2">
+            <h2 class="text-sm font-bold">System &amp; Alert Log</h2>
+            <button id="btnClearLog" class="text-[11px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">Clear</button>
+          </div>
+          <div id="eventLog" class="max-h-44 overflow-y-auto space-y-1.5 text-xs"></div>
+        </div>
+
+      </div>
+    </div>
+  </main>
+
+  <script>
+    // =========================================================================
+    // 1. CLINICAL NEWS2 SCORING (Royal College of Physicians Standard)
+    // =========================================================================
+    function computeNEWS2(p) {
+      if (!p || !p.occupied) return { total: 0, hasRed: false, tier: 'Vacant' };
+      let sRR = 0;
+      if (p.rr <= 8 || p.rr >= 25) sRR = 3;
+      else if (p.rr >= 21) sRR = 2;
+      else if (p.rr >= 9 && p.rr <= 11) sRR = 1;
+
+      let sSpO2 = 0;
+      if (p.spo2 <= 91) sSpO2 = 3;
+      else if (p.spo2 <= 93) sSpO2 = 2;
+      else if (p.spo2 <= 95) sSpO2 = 1;
+
+      let sO2 = p.onO2 ? 2 : 0;
+
+      let sSBP = 0;
+      if (p.sbp <= 90 || p.sbp >= 220) sSBP = 3;
+      else if (p.sbp <= 100) sSBP = 2;
+      else if (p.sbp <= 110) sSBP = 1;
+
+      let sHR = 0;
+      if (p.hr <= 40 || p.hr >= 131) sHR = 3;
+      else if (p.hr >= 111) sHR = 2;
+      else if (p.hr <= 50 || (p.hr >= 91 && p.hr <= 110)) sHR = 1;
+
+      let sTemp = 0;
+      if (p.temp <= 35.0) sTemp = 3;
+      else if (p.temp >= 39.1) sTemp = 2;
+      else if (p.temp <= 36.0 || p.temp >= 38.1) sTemp = 1;
+
+      let sACVPU = p.acvpu !== 'A' ? 3 : 0;
+
+      const total = sRR + sSpO2 + sO2 + sSBP + sHR + sTemp + sACVPU;
+      const hasRed = [sRR, sSpO2, sSBP, sHR, sTemp, sACVPU].some(v => v === 3);
+      let tier = 'Low';
+      if (total >= 7) tier = 'High';
+      else if (total >= 5) tier = 'Medium';
+      else if (hasRed) tier = 'Low-Med';
+      return { total, hasRed, tier };
+    }
+
+    // =========================================================================
+    // 2. INITIAL STATE & SCENARIO PRESETS
+    // =========================================================================
+    const BASE_ROOMS = [
+      { id: 101, type: 'High-Dependency', isolation: false, x: 20,  y: 16,  occupied: true,  patientId: 'P-401', diagnosis: 'Post-Op Thoracic', hr: 78,  spo2: 97, sbp: 122, rr: 16, temp: 36.8, onO2: false, acvpu: 'A', envTemp: 21.4, humidity: 45, ach: 10, pressure: 0.5 },
+      { id: 102, type: 'High-Dependency', isolation: false, x: 220, y: 16,  occupied: true,  patientId: 'P-402', diagnosis: 'Acute CHF',        hr: 94,  spo2: 94, sbp: 108, rr: 21, temp: 37.1, onO2: true,  acvpu: 'A', envTemp: 21.6, humidity: 46, ach: 10, pressure: 0.4 },
+      { id: 103, type: 'Isolation (Neg)', isolation: true,  x: 420, y: 16,  occupied: true,  patientId: 'P-403', diagnosis: 'Viral Pneumonia',  hr: 88,  spo2: 95, sbp: 118, rr: 19, temp: 37.9, onO2: true,  acvpu: 'A', envTemp: 20.8, humidity: 42, ach: 14, pressure: -3.4 },
+      { id: 104, type: 'Isolation (Neg)', isolation: true,  x: 620, y: 16,  occupied: true,  patientId: 'P-404', diagnosis: 'Suspected TB',     hr: 76,  spo2: 98, sbp: 126, rr: 15, temp: 36.9, onO2: false, acvpu: 'A', envTemp: 20.9, humidity: 43, ach: 14, pressure: -3.2 },
+      { id: 105, type: 'Standard Acute',  isolation: false, x: 20,  y: 234, occupied: true,  patientId: 'P-405', diagnosis: 'Community Sepsis', hr: 104, spo2: 95, sbp: 104, rr: 20, temp: 38.2, onO2: false, acvpu: 'A', envTemp: 22.0, humidity: 47, ach: 8,  pressure: 0.2 },
+      { id: 106, type: 'Standard Acute',  isolation: false, x: 220, y: 234, occupied: true,  patientId: 'P-406', diagnosis: 'Diabetic Ketoac.', hr: 86,  spo2: 98, sbp: 116, rr: 18, temp: 36.7, onO2: false, acvpu: 'A', envTemp: 21.8, humidity: 45, ach: 8,  pressure: 0.2 },
+      { id: 107, type: 'Standard Acute',  isolation: false, x: 420, y: 234, occupied: false, patientId: null,    diagnosis: null,               hr: 0,   spo2: 0,  sbp: 0,   rr: 0,  temp: 0,    onO2: false, acvpu: 'A', envTemp: 21.5, humidity: 44, ach: 8,  pressure: 0.2 },
+      { id: 108, type: 'Standard Acute',  isolation: false, x: 620, y: 234, occupied: false, patientId: null,    diagnosis: null,               hr: 0,   spo2: 0,  sbp: 0,   rr: 0,  temp: 0,    onO2: false, acvpu: 'A', envTemp: 21.5, humidity: 44, ach: 8,  pressure: 0.2 }
+    ];
+
+    const DIAGNOSES = ['Pneumonia', 'Post-Op Ortho', 'Urosepsis', 'COPD Exacerbation', 'GI Bleed', 'Acute Pyelonephritis', 'Cardiac Observation'];
+
+    const state = {
+      running: true,
+      speedMs: 1500,
+      tick: 0,
+      simMinutes: 8 * 60,
+      scenario: 'normal',
+      nursesOnShift: 6,
+      admissionPressure: 20,
+      hvacMode: 'nominal', // 'nominal' | 'boost' | 'fault'
+      strictThreshold: false,
+      selectedRoomId: 101,
+      nextPatientNum: 407,
+      rooms: [],
+      history: {
+        labels: [],
+        occupancy: [],
+        alerts: []
+      },
+      roomHistory: {}, // keyed by roomId: { labels, hr, spo2 }
+      logs: []
+    };
+
+    let simTimer = null;
+    let wardChart = null;
+    let roomChart = null;
+
+    // =========================================================================
+    // 3. UTILITIES & TOASTS
+    // =========================================================================
+    function showToast(msg, type = 'info') {
+      const container = document.getElementById('toastContainer');
+      const colors = {
+        info: 'bg-slate-800 text-white dark:bg-slate-100 dark:text-slate-900',
+        success: 'bg-emerald-600 text-white',
+        warn: 'bg-amber-500 text-white',
+        error: 'bg-rose-600 text-white'
+      };
+      const el = document.createElement('div');
+      el.className = `pointer-events-auto px-3.5 py-2.5 rounded-lg shadow-lg text-xs font-medium transition-opacity duration-300 ${colors[type] || colors.info}`;
+      el.textContent = msg;
+      container.appendChild(el);
+      setTimeout(() => {
+        el.style.opacity = '0';
+        setTimeout(() => el.remove(), 300);
+      }, 3200);
+    }
+
+    function formatClock(totalMinutes) {
+      const m = ((totalMinutes % 1440) + 1440) % 1440;
+      const hh = String(Math.floor(m / 60)).padStart(2, '0');
+      const mm = String(m % 60).padStart(2, '0');
+      return `${hh}:${mm}`;
+    }
+
+    function addLog(message, level = 'info') {
+      state.logs.unshift({ time: formatClock(state.simMinutes), message, level });
+      if (state.logs.length > 40) state.logs.pop();
+    }
+
+    function clamp(val, min, max) {
+      return Math.max(min, Math.min(max, val));
+    }
+
+    // =========================================================================
+    // 4. SCENARIO LOADER
+    // =========================================================================
+    function loadScenario(scenarioKey) {
+      state.scenario = scenarioKey;
+      state.tick = 0;
+      state.simMinutes = scenarioKey === 'night_shift' ? 23 * 60 : 8 * 60;
+      state.rooms = JSON.parse(JSON.stringify(BASE_ROOMS));
+      state.history = { labels: [], occupancy: [], alerts: [] };
+      state.roomHistory = {};
+      state.logs = [];
+      state.nextPatientNum = 407;
+
+      if (scenarioKey === 'normal') {
+        state.nursesOnShift = 6;
+        state.admissionPressure = 20;
+        state.hvacMode = 'nominal';
+        addLog('Loaded Normal Operations baseline (6 RNs, 75% occupancy).', 'info');
+      } else if (scenarioKey === 'surge') {
+        state.nursesOnShift = 5;
+        state.admissionPressure = 80;
+        state.hvacMode = 'nominal';
+        // Fill beds 107 & 108 with higher-acuity ER admissions
+        state.rooms[6] = { ...state.rooms[6], occupied: true, patientId: 'P-407', diagnosis: 'Multi-Trauma Obs', hr: 114, spo2: 93, sbp: 98, rr: 23, temp: 37.2, onO2: true, acvpu: 'A' };
+        state.rooms[7] = { ...state.rooms[7], occupied: true, patientId: 'P-408', diagnosis: 'Acute Asthma', hr: 118, spo2: 91, sbp: 112, rr: 25, temp: 37.0, onO2: true, acvpu: 'A' };
+        addLog('ER Mass Surge activated: 100% bed occupancy, high admission pressure.', 'warn');
+      } else if (scenarioKey === 'hvac_fault') {
+        state.nursesOnShift = 6;
+        state.admissionPressure = 30;
+        state.hvacMode = 'fault';
+        state.rooms[2].pressure = 0.9; state.rooms[2].ach = 4; state.rooms[2].envTemp = 26.2; state.rooms[2].humidity = 64;
+        state.rooms[3].pressure = 1.4; state.rooms[3].ach = 3; state.rooms[3].envTemp = 26.8; state.rooms[3].humidity = 67;
+        addLog('HVAC / Negative-Pressure Fault: Rooms 103 & 104 lost negative pressure!', 'error');
+      } else if (scenarioKey === 'sepsis') {
+        state.nursesOnShift = 6;
+        state.admissionPressure = 40;
+        state.hvacMode = 'nominal';
+        state.rooms[1] = { ...state.rooms[1], hr: 124, spo2: 90, sbp: 92, rr: 25, temp: 38.9, onO2: true, acvpu: 'A' };
+        state.rooms[4] = { ...state.rooms[4], hr: 132, spo2: 91, sbp: 88, rr: 26, temp: 39.3, onO2: true, acvpu: 'C' };
+        addLog('Respiratory / Sepsis Spike: Critical NEWS2 deterioration in Rooms 102 & 105.', 'error');
+      } else if (scenarioKey === 'night_shift') {
+        state.nursesOnShift = 3;
+        state.admissionPressure = 40;
+        state.hvacMode = 'nominal';
+        state.rooms[6] = { ...state.rooms[6], occupied: true, patientId: 'P-407', diagnosis: 'COPD Exacerbation', hr: 108, spo2: 92, sbp: 106, rr: 23, temp: 37.6, onO2: true, acvpu: 'A' };
+        addLog('Night-Shift Staffing Crunch: Only 3 RNs covering 7 occupied beds.', 'warn');
+      }
+
+      // Seed initial room history
+      state.rooms.forEach(r => {
+        state.roomHistory[r.id] = {
+          labels: [formatClock(state.simMinutes)],
+          hr: [r.occupied ? r.hr : null],
+          spo2: [r.occupied ? r.spo2 : null]
+        };
+      });
+
+      syncControlsToState();
+      recordHistoryPoint();
+      renderAll();
+      showToast(`Scenario: ${scenarioKey.replace('_', ' ').toUpperCase()}`, 'info');
+    }
+
+    function syncControlsToState() {
+      document.getElementById('sliderNurses').value = state.nursesOnShift;
+      document.getElementById('valNurses').textContent = `${state.nursesOnShift} RNs`;
+      document.getElementById('sliderAdmission').value = state.admissionPressure;
+      document.getElementById('valAdmission').textContent = `${state.admissionPressure}%`;
+
+      document.querySelectorAll('.scenario-btn').forEach(btn => {
+        const active = btn.dataset.scenario === state.scenario;
+        btn.className = active
+          ? 'scenario-btn px-3 py-1 rounded-full text-xs font-semibold bg-teal-600 text-white shadow-sm transition'
+          : 'scenario-btn px-3 py-1 rounded-full text-xs font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700 transition';
+      });
+
+      document.querySelectorAll('.hvac-btn').forEach(btn => {
+        const active = btn.dataset.hvac === state.hvacMode;
+        btn.className = active
+          ? 'hvac-btn py-1.5 px-2 rounded-lg text-xs font-semibold border border-teal-600 bg-teal-600 text-white transition'
+          : 'hvac-btn py-1.5 px-2 rounded-lg text-xs font-medium border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 transition';
+      });
+
+      const strictBtn = document.getElementById('btnStrictThreshold');
+      const thumb = document.getElementById('strictThumb');
+      strictBtn.setAttribute('aria-checked', String(state.strictThreshold));
+      if (state.strictThreshold) {
+        strictBtn.classList.remove('bg-slate-300', 'dark:bg-slate-700');
+        strictBtn.classList.add('bg-teal-600');
+        thumb.classList.add('translate-x-5');
+        thumb.classList.remove('translate-x-0.5');
+      } else {
+        strictBtn.classList.add('bg-slate-300', 'dark:bg-slate-700');
+        strictBtn.classList.remove('bg-teal-600');
+        thumb.classList.remove('translate-x-5');
+        thumb.classList.add('translate-x-0.5');
+      }
+    }
+
+    // =========================================================================
+    // 5. SIMULATION STEP ENGINE
+    // =========================================================================
+    function stepSimulation() {
+      state.tick += 1;
+      state.simMinutes += 1;
+      const tStr = formatClock(state.simMinutes);
+
+      const occupiedCount = state.rooms.filter(r => r.occupied).length;
+      const nurseCapacityRatio = state.nursesOnShift / Math.max(1, occupiedCount);
+      const stabilizationBonus = nurseCapacityRatio >= 0.75 ? 0.35 : (nurseCapacityRatio >= 0.5 ? 0.1 : -0.25);
+
+      state.rooms.forEach(room => {
+        // Environmental dynamics
+        if (state.hvacMode === 'fault' && room.isolation) {
+          room.pressure = clamp(+(room.pressure + 0.25 + (Math.random() - 0.3) * 0.2).toFixed(1), -5, 3.5);
+          room.ach = clamp(Math.round(room.ach - (Math.random() > 0.6 ? 1 : 0)), 2, 16);
+          room.envTemp = clamp(+(room.envTemp + 0.15).toFixed(1), 18, 29);
+          room.humidity = clamp(Math.round(room.humidity + 1), 30, 75);
+        } else if (state.hvacMode === 'boost' && room.isolation) {
+          room.pressure = clamp(+(room.pressure - 0.35).toFixed(1), -5.0, 2.0);
+          room.ach = clamp(room.ach + (room.ach < 15 ? 1 : 0), 4, 16);
+          room.envTemp = clamp(+(room.envTemp + (20.5 - room.envTemp) * 0.25).toFixed(1), 18, 28);
+          room.humidity = clamp(Math.round(room.humidity + (43 - room.humidity) * 0.2), 30, 75);
+        } else {
+          const targetP = room.isolation ? -3.2 : 0.3;
+          const targetACH = room.isolation ? 14 : 9;
+          room.pressure = +(room.pressure + (targetP - room.pressure) * 0.2 + (Math.random() - 0.5) * 0.15).toFixed(1);
+          room.ach = Math.round(room.ach + (targetACH - room.ach) * 0.25);
+          room.envTemp = clamp(+(room.envTemp + (21.5 - room.envTemp) * 0.15 + (Math.random() - 0.5) * 0.1).toFixed(1), 18, 28);
+          room.humidity = clamp(Math.round(room.humidity + (45 - room.humidity) * 0.15), 30, 75);
+        }
+
+        // Patient physiological dynamics
+        if (room.occupied) {
+          const sepsisDrift = state.scenario === 'sepsis' ? 0.35 : 0;
+          const envStress = room.envTemp > 25 ? 0.4 : 0;
+
+          room.hr = clamp(Math.round(room.hr + (Math.random() - 0.48 - stabilizationBonus * 0.4 + sepsisDrift + envStress) * 4), 42, 155);
+          const o2Boost = room.onO2 ? 0.35 : -0.1;
+          room.spo2 = clamp(Math.round(room.spo2 + (Math.random() - 0.5 + o2Boost + stabilizationBonus * 0.3 - sepsisDrift) * 1.6), 82, 100);
+          room.sbp = clamp(Math.round(room.sbp + (Math.random() - 0.5 - sepsisDrift * 0.5 + stabilizationBonus * 0.3) * 4), 78, 175);
+          room.rr = clamp(Math.round(room.rr + (Math.random() - 0.5 + sepsisDrift * 0.4 - stabilizationBonus * 0.2) * 1.8), 10, 32);
+          room.temp = clamp(+(room.temp + (Math.random() - 0.5 + sepsisDrift * 0.25) * 0.14).toFixed(1), 35.2, 40.4);
+
+          const news = computeNEWS2(room);
+          if (news.total >= 7 && Math.random() < 0.25) {
+            addLog(`CRITICAL: Room ${room.id} (${room.patientId}) NEWS2=${news.total} (HR ${room.hr}, SpO₂ ${room.spo2}%).`, 'error');
+          }
+        }
+
+        // Record per-room chart history
+        const rh = state.roomHistory[room.id];
+        rh.labels.push(tStr);
+        rh.hr.push(room.occupied ? room.hr : null);
+        rh.spo2.push(room.occupied ? room.spo2 : null);
+        if (rh.labels.length > 20) {
+          rh.labels.shift(); rh.hr.shift(); rh.spo2.shift();
+        }
+      });
+
+      // Stochastic ER Admission into vacant beds based on admissionPressure
+      const vacantRooms = state.rooms.filter(r => !r.occupied);
+      if (vacantRooms.length > 0 && Math.random() * 100 < state.admissionPressure * 0.22) {
+        const target = vacantRooms[0];
+        admitPatientToRoom(target, false);
+      }
+
+      recordHistoryPoint();
+      renderAll();
+    }
+
+    function admitPatientToRoom(room, manual = true) {
+      const pid = `P-${state.nextPatientNum++}`;
+      const diag = DIAGNOSES[Math.floor(Math.random() * DIAGNOSES.length)];
+      const highAcuity = state.scenario === 'surge' || state.scenario === 'sepsis';
+      room.occupied = true;
+      room.patientId = pid;
+      room.diagnosis = diag;
+      room.hr = highAcuity ? 108 : 82;
+      room.spo2 = highAcuity ? 93 : 97;
+      room.sbp = highAcuity ? 102 : 122;
+      room.rr = highAcuity ? 22 : 17;
+      room.temp = highAcuity ? 38.1 : 36.9;
+      room.onO2 = highAcuity;
+      room.acvpu = 'A';
+      addLog(`${manual ? 'Manual admission' : 'ER admission'}: ${pid} (${diag}) → Room ${room.id}.`, 'info');
+    }
+
+    function recordHistoryPoint() {
+      const occPct = Math.round((state.rooms.filter(r => r.occupied).length / state.rooms.length) * 100);
+      const alertThresh = state.strictThreshold ? 4 : 5;
+      const alertCount = state.rooms.filter(r => {
+        const n = computeNEWS2(r);
+        const isoFail = r.isolation && (r.pressure > -2.5 || r.ach < 12);
+        return (r.occupied && (n.total >= alertThresh || n.hasRed)) || isoFail;
+      }).length;
+
+      state.history.labels.push(formatClock(state.simMinutes));
+      state.history.occupancy.push(occPct);
+      state.history.alerts.push(alertCount);
+      if (state.history.labels.length > 20) {
+        state.history.labels.shift();
+        state.history.occupancy.shift();
+        state.history.alerts.shift();
+      }
+    }
+
+    // =========================================================================
+    // 6. RENDERING: KPIs, SVG FLOOR PLAN, TABLE, INSPECTOR, GOVERNANCE, CHARTS
+    // =========================================================================
+    function renderAll() {
+      document.getElementById('simClock').textContent = formatClock(state.simMinutes);
+      document.getElementById('simTickLabel').textContent = `Tick ${state.tick}`;
+      document.getElementById('svgNurseCount').textContent = `${state.nursesOnShift} RNs Active • Telemetry Sync OK`;
+
+      renderKPIs();
+      renderSvgFloorPlan();
+      renderTable();
+      renderInspector();
+      renderGovernance();
+      renderLogs();
+      updateCharts();
+    }
+
+    function renderKPIs() {
+      const occupied = state.rooms.filter(r => r.occupied);
+      const occPct = Math.round((occupied.length / state.rooms.length) * 100);
+      document.getElementById('kpiOccupancy').textContent = `${occPct}%`;
+      document.getElementById('kpiOccupancySub').textContent = `${occupied.length} / ${state.rooms.length} beds`;
+      const occBar = document.getElementById('kpiOccupancyBar');
+      occBar.style.width = `${occPct}%`;
+      occBar.className = `h-full transition-all duration-300 ${occPct >= 88 ? 'bg-rose-500' : occPct >= 75 ? 'bg-amber-500' : 'bg-teal-500'}`;
+
+      const alertThresh = state.strictThreshold ? 4 : 5;
+      let critCount = 0, warnCount = 0, newsSum = 0;
+      occupied.forEach(r => {
+        const n = computeNEWS2(r);
+        newsSum += n.total;
+        if (n.total >= 7) critCount++;
+        else if (n.total >= alertThresh || n.hasRed) warnCount++;
+      });
+      const isoRooms = state.rooms.filter(r => r.isolation);
+      const isoCompliant = isoRooms.filter(r => r.pressure <= -2.5 && r.ach >= 12).length;
+      const isoAlerts = isoRooms.length - isoCompliant;
+      const totalAlerts = critCount + warnCount + isoAlerts;
+
+      document.getElementById('kpiAlerts').textContent = totalAlerts;
+      document.getElementById('kpiAlertsSub').textContent = `${critCount} critical • ${isoAlerts} env`;
+      const alertBadge = document.getElementById('kpiAlertsBadge');
+      if (critCount > 0 || isoAlerts > 0) {
+        alertBadge.textContent = 'Immediate escalation required';
+        alertBadge.className = 'mt-2 text-[11px] font-semibold text-rose-600 dark:text-rose-400';
+      } else if (warnCount > 0) {
+        alertBadge.textContent = 'Urgent ward review needed';
+        alertBadge.className = 'mt-2 text-[11px] font-medium text-amber-600 dark:text-amber-400';
+      } else {
+        alertBadge.textContent = 'All rooms nominal';
+        alertBadge.className = 'mt-2 text-[11px] font-medium text-emerald-600 dark:text-emerald-400';
+      }
+
+      const meanNews = occupied.length ? (newsSum / occupied.length).toFixed(1) : '0.0';
+      document.getElementById('kpiNews2').textContent = meanNews;
+      const tierEl = document.getElementById('kpiNews2Tier');
+      if (meanNews >= 5) {
+        tierEl.textContent = 'High'; tierEl.className = 'text-xs px-1.5 py-0.5 rounded bg-rose-100 text-rose-800 dark:bg-rose-900/50 dark:text-rose-300 font-medium';
+      } else if (meanNews >= 3) {
+        tierEl.textContent = 'Moderate'; tierEl.className = 'text-xs px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300 font-medium';
+      } else {
+        tierEl.textContent = 'Low'; tierEl.className = 'text-xs px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300 font-medium';
+      }
+
+      const workload = Math.min(140, Math.round(((occupied.length * 1.0 + critCount * 0.6 + warnCount * 0.3) / Math.max(1, state.nursesOnShift)) * 65));
+      document.getElementById('kpiWorkload').textContent = `${workload}%`;
+      const ratio = occupied.length ? (occupied.length / state.nursesOnShift).toFixed(1) : '0.0';
+      document.getElementById('kpiRatio').textContent = `1 : ${ratio} RN`;
+      const wBar = document.getElementById('kpiWorkloadBar');
+      wBar.style.width = `${Math.min(100, workload)}%`;
+      wBar.className = `h-full transition-all duration-300 ${workload >= 95 ? 'bg-rose-500' : workload >= 75 ? 'bg-amber-500' : 'bg-indigo-500'}`;
+
+      const isoPct = Math.round((isoCompliant / isoRooms.length) * 100);
+      document.getElementById('kpiIsolation').textContent = `${isoPct}%`;
+      document.getElementById('kpiIsolationSub').textContent = `${isoCompliant} / ${isoRooms.length} Neg-P`;
+
+      const respTime = (1.1 + (workload / 100) * 2.4 + critCount * 0.5).toFixed(1);
+      document.getElementById('kpiResponse').textContent = `${respTime}m`;
+      const respStatus = document.getElementById('kpiResponseStatus');
+      if (parseFloat(respTime) > 3.0) {
+        respStatus.textContent = 'Exceeds 3.0m SLA';
+        respStatus.className = 'mt-2 text-[11px] font-semibold text-rose-600 dark:text-rose-400';
+      } else {
+        respStatus.textContent = 'Within clinical SLA';
+        respStatus.className = 'mt-2 text-[11px] font-medium text-emerald-600 dark:text-emerald-400';
+      }
+    }
+
+    function renderSvgFloorPlan() {
+      const layer = document.getElementById('svgRoomsLayer');
+      const isDark = document.documentElement.classList.contains('dark');
+      const alertThresh = state.strictThreshold ? 4 : 5;
+      let html = '';
+
+      state.rooms.forEach(r => {
+        const news = computeNEWS2(r);
+        const isoFail = r.isolation && (r.pressure > -2.5 || r.ach < 12);
+        const isSelected = r.id === state.selectedRoomId;
+
+        let fill = isDark ? '#1e293b' : '#ffffff';
+        let stroke = isDark ? '#334155' : '#cbd5e1';
+        let badgeFill = '#64748b';
+        let statusText = 'VACANT';
+        let pulseClass = '';
+
+        if (r.occupied) {
+          if (news.total >= 7) {
+            fill = isDark ? '#4c0519' : '#fff1f2';
+            stroke = '#f43f5e';
+            badgeFill = '#e11d48';
+            statusText = `NEWS2 ${news.total} • CRIT`;
+            pulseClass = 'pulse-critical';
+          } else if (news.total >= alertThresh || news.hasRed) {
+            fill = isDark ? '#451a03' : '#fffbeb';
+            stroke = '#f59e0b';
+            badgeFill = '#d97706';
+            statusText = `NEWS2 ${news.total} • WARN`;
+          } else {
+            fill = isDark ? '#064e3b' : '#ecfdf5';
+            stroke = '#10b981';
+            badgeFill = '#059669';
+            statusText = `NEWS2 ${news.total} • OK`;
+          }
+        }
+        if (isoFail) {
+          stroke = '#a855f7';
+          pulseClass = 'pulse-critical';
+        }
+
+        const selStrokeWidth = isSelected ? 3 : 1.5;
+        const textMain = isDark ? '#f1f5f9' : '#0f172a';
+        const textSub = isDark ? '#94a3b8' : '#475569';
+
+        html += `
+          <g class="room-card-svg ${pulseClass}" data-room-id="${r.id}" transform="translate(${r.x}, ${r.y})">
+            <rect width="185" height="122" rx="10" fill="${fill}" stroke="${isSelected ? '#0d9488' : stroke}" stroke-width="${selStrokeWidth}" />
+            <text x="12" y="22" fill="${textMain}" font-size="13" font-weight="700">Room ${r.id}</text>
+            <text x="173" y="21" text-anchor="end" fill="${textSub}" font-size="9.5" font-weight="600">${r.isolation ? 'NEG-ISO' : 'ACUTE'}</text>
+
+            <rect x="12" y="30" width="102" height="18" rx="4" fill="${badgeFill}" />
+            <text x="18" y="42.5" fill="#ffffff" font-size="9.5" font-weight="700">${statusText}</text>
+
+            ${r.occupied ? `
+              <text x="12" y="65" fill="${textMain}" font-size="11" font-weight="600">${r.patientId} • ${r.diagnosis}</text>
+              <text x="12" y="83" fill="${textSub}" font-size="10.5">HR: ${r.hr} bpm   SpO₂: ${r.spo2}%</text>
+              <text x="12" y="99" fill="${textSub}" font-size="10.5">BP: ${r.sbp} mmHg   T: ${r.temp}°C</text>
+            ` : `
+              <text x="12" y="72" fill="${textSub}" font-size="11">Ready for Admission</text>
+              <text x="12" y="90" fill="${textSub}" font-size="10">Sanitized • Telemetry Standby</text>
+            `}
+
+            <text x="12" y="114" fill="${isoFail ? '#c084fc' : textSub}" font-size="9.5" font-weight="${isoFail ? '700' : '500'}">
+              Env: ${r.envTemp}°C | ${r.pressure > 0 ? '+' : ''}${r.pressure} Pa ${isoFail ? '⚠ FAULT' : ''}
+            </text>
+          </g>
+        `;
+      });
+
+      layer.innerHTML = html;
+    }
+
+    function renderTable() {
+      const tbody = document.getElementById('roomTableBody');
+      const alertThresh = state.strictThreshold ? 4 : 5;
+      tbody.innerHTML = state.rooms.map(r => {
+        const news = computeNEWS2(r);
+        const isoFail = r.isolation && (r.pressure > -2.5 || r.ach < 12);
+        const selected = r.id === state.selectedRoomId;
+        let badge = '<span class="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">Vacant</span>';
+        if (r.occupied) {
+          if (news.total >= 7) badge = '<span class="px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 dark:bg-rose-900/50 dark:text-rose-300 font-semibold">Critical</span>';
+          else if (news.total >= alertThresh || news.hasRed) badge = '<span class="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-300 font-semibold">Review</span>';
+          else badge = '<span class="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300 font-medium">Stable</span>';
+        }
+        if (isoFail) badge += ' <span class="px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 dark:bg-purple-900/50 dark:text-purple-300 font-semibold">HVAC</span>';
+
+        return `
+          <tr data-room-id="${r.id}" class="cursor-pointer transition ${selected ? 'bg-teal-50/80 dark:bg-teal-950/40' : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'}">
+            <td class="py-2 pr-3 font-semibold">${r.id} ${r.isolation ? '<span class="text-[10px] text-purple-500">ISO</span>' : ''}</td>
+            <td class="py-2 pr-3">${r.occupied ? `${r.patientId} (${r.diagnosis})` : '—'}</td>
+            <td class="py-2 pr-3 font-bold">${r.occupied ? news.total : '—'}</td>
+            <td class="py-2 pr-3">${r.occupied ? `${r.hr}` : '—'}</td>
+            <td class="py-2 pr-3">${r.occupied ? `${r.spo2}%` : '—'}</td>
+            <td class="py-2 pr-3">${r.occupied ? `${r.temp}°C` : '—'}</td>
+            <td class="py-2 pr-3">${r.envTemp}°C / ${r.pressure > 0 ? '+' : ''}${r.pressure}Pa</td>
+            <td class="py-2">${badge}</td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    function renderInspector() {
+      const r = state.rooms.find(rm => rm.id === state.selectedRoomId) || state.rooms[0];
+      const news = computeNEWS2(r);
+
+      document.getElementById('inspectorTitle').textContent = `Room ${r.id} — ${r.type}`;
+      document.getElementById('roomChartTitle').textContent = `Room ${r.id} Vitals Trend`;
+      const badge = document.getElementById('inspectorNews2Badge');
+
+      if (!r.occupied) {
+        document.getElementById('inspectorSubtitle').textContent = 'Vacant Bed • Ready for Admission';
+        badge.textContent = 'VACANT';
+        badge.className = 'px-2.5 py-1 rounded-lg text-xs font-bold bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300';
+        document.getElementById('inspectorOccupiedBody').classList.add('hidden');
+        document.getElementById('inspectorVacantBody').classList.remove('hidden');
+        return;
+      }
+
+      document.getElementById('inspectorOccupiedBody').classList.remove('hidden');
+      document.getElementById('inspectorVacantBody').classList.add('hidden');
+      document.getElementById('inspectorSubtitle').textContent = `Patient ${r.patientId} • ${r.diagnosis}`;
+      badge.textContent = `NEWS2: ${news.total} (${news.tier})`;
+
+      if (news.total >= 7) badge.className = 'px-2.5 py-1 rounded-lg text-xs font-bold bg-rose-100 text-rose-800 dark:bg-rose-900/60 dark:text-rose-300';
+      else if (news.total >= 5) badge.className = 'px-2.5 py-1 rounded-lg text-xs font-bold bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-300';
+      else badge.className = 'px-2.5 py-1 rounded-lg text-xs font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300';
+
+      document.getElementById('insHR').textContent = `${r.hr} bpm`;
+      document.getElementById('insSpO2').textContent = `${r.spo2}%`;
+      document.getElementById('insSBP').textContent = `${r.sbp} mmHg`;
+      document.getElementById('insRR').textContent = `${r.rr} /min`;
+      document.getElementById('insTemp').textContent = `${r.temp}°C`;
+      document.getElementById('insO2').textContent = `${r.onO2 ? 'Supp O₂' : 'Room Air'} • ${r.acvpu}`;
+      document.getElementById('insEnvTemp').textContent = `${r.envTemp}°C`;
+      document.getElementById('insEnvHum').textContent = `${r.humidity}% RH`;
+      document.getElementById('insEnvPress').textContent = `${r.pressure > 0 ? '+' : ''}${r.pressure} Pa`;
+      document.getElementById('insEnvACH').textContent = `${r.ach} ACH`;
+      document.getElementById('btnToggleO2').textContent = r.onO2 ? 'Wean to Room Air' : 'Start Supp. O₂';
+    }
+
+    function renderGovernance() {
+      const occupied = state.rooms.filter(r => r.occupied);
+      const occPct = Math.round((occupied.length / state.rooms.length) * 100);
+      const critRooms = occupied.filter(r => computeNEWS2(r).total >= 7);
+      const isoFailRooms = state.rooms.filter(r => r.isolation && (r.pressure > -2.5 || r.ach < 12));
+      const ratio = occupied.length / Math.max(1, state.nursesOnShift);
+
+      const recs = [];
+      if (isoFailRooms.length > 0) {
+        recs.push({
+          level: 'error',
+          title: `Infection-Control Breach (Rooms ${isoFailRooms.map(r => r.id).join(', ')})`,
+          body: 'Negative-pressure differential lost. Switch HVAC to "Iso Boost" or relocate airborne-isolation patients immediately.'
+        });
+      }
+      if (critRooms.length > 0) {
+        recs.push({
+          level: 'error',
+          title: `Rapid Response / ICU Escalation (${critRooms.length} patient${critRooms.length > 1 ? 's' : ''})`,
+          body: `Rooms ${critRooms.map(r => r.id).join(', ')} reached NEWS2 ≥ 7. Dispatch RN and notify ICU outreach team.`
+        });
+      }
+      if (ratio > 1.5) {
+        recs.push({
+          level: 'warn',
+          title: `Staffing Deficit (1 : ${ratio.toFixed(1)} RN ratio)`,
+          body: 'Nurse workload exceeds safe acute-care threshold. Authorize float-pool RN (+1 or +2 RNs) to restore < 3.0m SLA.'
+        });
+      }
+      if (occPct >= 88) {
+        recs.push({
+          level: 'warn',
+          title: `Capacity Surge (${occPct}% Occupied)`,
+          body: 'Activate ED diversion protocol for non-urgent transfers and expedite step-down discharges.'
+        });
+      }
+      if (recs.length === 0) {
+        recs.push({
+          level: 'ok',
+          title: 'Ward Governance Nominal',
+          body: 'Staffing, bed capacity, and isolation air-pressure metrics are all within hospital safety benchmarks.'
+        });
+      }
+
+      const styles = {
+        error: 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800 text-rose-900 dark:text-rose-200',
+        warn: 'bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-200',
+        ok: 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200'
+      };
+
+      document.getElementById('governanceList').innerHTML = recs.map(rc => `
+        <div class="p-2.5 rounded-lg border ${styles[rc.level]}">
+          <div class="font-bold">${rc.title}</div>
+          <div class="mt-0.5 opacity-90">${rc.body}</div>
+        </div>
+      `).join('');
+    }
+
+    function renderLogs() {
+      const levelColors = {
+        error: 'text-rose-600 dark:text-rose-400',
+        warn: 'text-amber-600 dark:text-amber-400',
+        info: 'text-slate-600 dark:text-slate-300'
+      };
+      document.getElementById('eventLog').innerHTML = state.logs.map(l => `
+        <div class="flex gap-2 border-b border-slate-100 dark:border-slate-800/70 pb-1">
+          <span class="font-mono text-slate-400 shrink-0">${l.time}</span>
+          <span class="${levelColors[l.level] || levelColors.info}">${l.message}</span>
+        </div>
+      `).join('');
+    }
+
+    // =========================================================================
+    // 7. CHARTS (Chart.js 4.4.1)
+    // =========================================================================
+    function initCharts() {
+      const ctxWard = document.getElementById('wardChart').getContext('2d');
+      const ctxRoom = document.getElementById('roomChart').getContext('2d');
+
+      wardChart = new Chart(ctxWard, {
+        type: 'line',
+        data: {
+          labels: [],
+          datasets: [
+            { label: 'Occupancy %', data: [], borderColor: '#0d9488', backgroundColor: 'rgba(13,148,136,0.12)', tension: 0.3, fill: true, yAxisID: 'y' },
+            { label: 'Active Alerts', data: [], borderColor: '#e11d48', backgroundColor: 'rgba(225,29,72,0.1)', tension: 0.3, yAxisID: 'y1' }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: false,
+          scales: {
+            y: { min: 0, max: 100, title: { display: true, text: 'Occ %' } },
+            y1: { position: 'right', min: 0, suggestedMax: 6, grid: { drawOnChartArea: false }, title: { display: true, text: 'Alerts' } }
+          }
+        }
+      });
+
+      roomChart = new Chart(ctxRoom, {
+        type: 'line',
+        data: {
+          labels: [],
+          datasets: [
+            { label: 'Heart Rate (bpm)', data: [], borderColor: '#6366f1', tension: 0.3, yAxisID: 'y' },
+            { label: 'SpO₂ (%)', data: [], borderColor: '#10b981', tension: 0.3, yAxisID: 'y1' }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: false,
+          scales: {
+            y: { min: 40, max: 160, title: { display: true, text: 'HR' } },
+            y1: { position: 'right', min: 80, max: 100, grid: { drawOnChartArea: false }, title: { display: true, text: 'SpO₂ %' } }
+          }
+        }
+      });
+      applyChartTheme();
+    }
+
+    function applyChartTheme() {
+      if (!wardChart || !roomChart) return;
+      const isDark = document.documentElement.classList.contains('dark');
+      const textColor = isDark ? '#cbd5e1' : '#475569';
+      const gridColor = isDark ? 'rgba(148,163,184,0.12)' : 'rgba(148,163,184,0.22)';
+
+      [wardChart, roomChart].forEach(c => {
+        c.options.plugins.legend.labels.color = textColor;
+        Object.values(c.options.scales).forEach(s => {
+          s.ticks.color = textColor;
+          if (s.title) s.title.color = textColor;
+          if (s.grid) s.grid.color = gridColor;
+        });
+        c.update('none');
+      });
+    }
+
+    function updateCharts() {
+      if (!wardChart || !roomChart) return;
+      wardChart.data.labels = state.history.labels;
+      wardChart.data.datasets[0].data = state.history.occupancy;
+      wardChart.data.datasets[1].data = state.history.alerts;
+      wardChart.update('none');
+
+      const rh = state.roomHistory[state.selectedRoomId] || { labels: [], hr: [], spo2: [] };
+      roomChart.data.labels = rh.labels;
+      roomChart.data.datasets[0].data = rh.hr;
+      roomChart.data.datasets[1].data = rh.spo2;
+      roomChart.update('none');
+    }
+
+    // =========================================================================
+    // 8. DATA IMPORT / EXPORT (CSV & JSON)
+    // =========================================================================
+    function exportCSV() {
+      const headers = ['RoomID', 'Type', 'Isolation', 'Occupied', 'PatientID', 'Diagnosis', 'HR', 'SpO2', 'SBP', 'RR', 'BodyTempC', 'OnO2', 'ACVPU', 'NEWS2', 'EnvTempC', 'HumidityPct', 'ACH', 'PressurePa'];
+      const rows = state.rooms.map(r => {
+        const n = computeNEWS2(r).total;
+        return [r.id, r.type, r.isolation, r.occupied, r.patientId || '', r.diagnosis || '', r.hr, r.spo2, r.sbp, r.rr, r.temp, r.onO2, r.acvpu, n, r.envTemp, r.humidity, r.ach, r.pressure]
+          .map(v => `"${String(v).replace(/"/g, '""')}"`).join(',');
+      });
+      const csv = [headers.join(','), ...rows].join('\n');
+      downloadBlob(csv, `ward_telemetry_tick_${state.tick}.csv`, 'text/csv;charset=utf-8;');
+      showToast('Exported ward telemetry CSV.', 'success');
+    }
+
+    function exportJSON() {
+      const payload = {
+        exportedAt: new Date().toISOString(),
+        simTime: formatClock(state.simMinutes),
+        tick: state.tick,
+        scenario: state.scenario,
+        nursesOnShift: state.nursesOnShift,
+        hvacMode: state.hvacMode,
+        rooms: state.rooms.map(r => ({ ...r, news2: computeNEWS2(r) }))
+      };
+      downloadBlob(JSON.stringify(payload, null, 2), `ward_digital_twin_tick_${state.tick}.json`, 'application/json');
+      showToast('Exported digital twin JSON snapshot.', 'success');
+    }
+
+    function downloadSampleCSV() {
+      const sample = [
+        'RoomID,Occupied,PatientID,Diagnosis,HR,SpO2,SBP,RR,BodyTempC,OnO2,ACVPU,EnvTempC,PressurePa',
+        '101,true,P-901,Post-Op Cardiac,84,96,118,17,36.9,false,A,21.2,0.4',
+        '102,true,P-902,Acute Sepsis,126,90,92,25,39.1,true,A,21.8,0.3',
+        '103,true,P-903,COVID Isolation,96,93,115,21,38.3,true,A,20.8,-3.5',
+        '107,true,P-904,COPD Flare,102,91,110,23,37.4,true,A,21.5,0.2'
+      ].join('\n');
+      downloadBlob(sample, 'sample_ward_import.csv', 'text/csv;charset=utf-8;');
+      showToast('Downloaded sample_ward_import.csv', 'info');
+    }
+
+    function downloadBlob(content, filename, mime) {
+      const blob = new Blob([content], { type: mime });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    function handleFileImport(file) {
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const text = e.target.result;
+          if (file.name.endsWith('.json')) {
+            const data = JSON.parse(text);
+            const incomingRooms = Array.isArray(data) ? data : data.rooms;
+            if (!Array.isArray(incomingRooms)) throw new Error('Invalid JSON structure');
+            applyImportedRooms(incomingRooms);
+          } else {
+            const lines = text.trim().split(/\r?\n/);
+            if (lines.length < 2) throw new Error('CSV has no data rows');
+            const headers = lines[0].split(',').map(h => h.replace(/^"|"$/g, '').trim());
+            const parsed = lines.slice(1).map(line => {
+              const vals = line.split(',').map(v => v.replace(/^"|"$/g, '').trim());
+              const obj = {};
+              headers.forEach((h, i) => { obj[h] = vals[i]; });
+              return obj;
+            });
+            applyImportedRooms(parsed);
+          }
+          addLog(`Imported telemetry from ${file.name}.`, 'info');
+          renderAll();
+          showToast(`Imported ${file.name} successfully!`, 'success');
+        } catch (err) {
+          showToast(`Import failed: ${err.message}`, 'error');
+        }
+      };
+      reader.readAsText(file);
+    }
+
+    function applyImportedRooms(list) {
+      list.forEach(item => {
+        const rid = Number(item.RoomID ?? item.id);
+        const room = state.rooms.find(r => r.id === rid);
+        if (!room) return;
+        const occ = item.Occupied !== undefined ? String(item.Occupied).toLowerCase() === 'true' : Boolean(item.occupied);
+        room.occupied = occ;
+        room.patientId = occ ? (item.PatientID || item.patientId || `P-${state.nextPatientNum++}`) : null;
+        room.diagnosis = occ ? (item.Diagnosis || item.diagnosis || 'Imported Case') : null;
+        if (occ) {
+          room.hr = Number(item.HR ?? item.hr ?? 80) || 80;
+          room.spo2 = Number(item.SpO2 ?? item.spo2 ?? 97) || 97;
+          room.sbp = Number(item.SBP ?? item.sbp ?? 120) || 120;
+          room.rr = Number(item.RR ?? item.rr ?? 16) || 16;
+          room.temp = Number(item.BodyTempC ?? item.temp ?? 36.8) || 36.8;
+          room.onO2 = String(item.OnO2 ?? item.onO2 ?? 'false').toLowerCase() === 'true';
+          room.acvpu = item.ACVPU || item.acvpu || 'A';
+        }
+        if (item.EnvTempC !== undefined || item.envTemp !== undefined) room.envTemp = Number(item.EnvTempC ?? item.envTemp);
+        if (item.PressurePa !== undefined || item.pressure !== undefined) room.pressure = Number(item.PressurePa ?? item.pressure);
+      });
+    }
+
+    // =========================================================================
+    // 9. THEME & EVENT LISTENERS
+    // =========================================================================
+    function toggleTheme() {
+      const html = document.documentElement;
+      const nextDark = !html.classList.contains('dark');
+      html.classList.toggle('dark', nextDark);
+      html.classList.toggle('light', !nextDark);
+      document.getElementById('themeIcon').textContent = nextDark ? '☀️' : '🌙';
+      try { localStorage.setItem('medtwin_theme', nextDark ? 'dark' : 'light'); } catch (e) {}
+      renderSvgFloorPlan();
+      applyChartTheme();
+    }
+
+    function startSimLoop() {
+      if (simTimer) clearInterval(simTimer);
+      if (state.running) {
+        simTimer = setInterval(stepSimulation, state.speedMs);
+      }
+      document.getElementById('playPauseIcon').textContent = state.running ? '❚❚' : '▶';
+      document.getElementById('playPauseText').textContent = state.running ? 'Pause' : 'Play';
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      try {
+        const saved = localStorage.getItem('medtwin_theme');
+        if (saved === 'dark') {
+          document.documentElement.classList.add('dark');
+          document.documentElement.classList.remove('light');
+          document.getElementById('themeIcon').textContent = '☀️';
+        }
+      } catch (e) {}
+
+      initCharts();
+      loadScenario('normal');
+      startSimLoop();
+
+      document.getElementById('btnPlayPause').addEventListener('click', () => {
+        state.running = !state.running;
+        startSimLoop();
+      });
+
+      document.getElementById('btnStep').addEventListener('click', () => {
+        stepSimulation();
+      });
+
+      document.getElementById('speedSelect').addEventListener('change', (e) => {
+        state.speedMs = Number(e.target.value);
+        startSimLoop();
+      });
+
+      document.getElementById('btnReset').addEventListener('click', () => {
+        loadScenario(state.scenario);
+      });
+
+      document.getElementById('btnThemeToggle').addEventListener('click', toggleTheme);
+
+      document.querySelectorAll('.scenario-btn').forEach(btn => {
+        btn.addEventListener('click', () => loadScenario(btn.dataset.scenario));
+      });
+
+      document.querySelectorAll('.hvac-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          state.hvacMode = btn.dataset.hvac;
+          syncControlsToState();
+          addLog(`HVAC policy switched to ${state.hvacMode.toUpperCase()}.`, 'info');
+          renderAll();
+        });
+      });
+
+      document.getElementById('sliderNurses').addEventListener('input', (e) => {
+        state.nursesOnShift = Number(e.target.value);
+        document.getElementById('valNurses').textContent = `${state.nursesOnShift} RNs`;
+        renderAll();
+      });
+
+      document.getElementById('sliderAdmission').addEventListener('input', (e) => {
+        state.admissionPressure = Number(e.target.value);
+        document.getElementById('valAdmission').textContent = `${state.admissionPressure}%`;
+      });
+
+      document.getElementById('btnStrictThreshold').addEventListener('click', () => {
+        state.strictThreshold = !state.strictThreshold;
+        syncControlsToState();
+        renderAll();
+      });
+
+      // Delegate room clicks from SVG and Table
+      document.getElementById('svgRoomsLayer').addEventListener('click', (e) => {
+        const g = e.target.closest('[data-room-id]');
+        if (g) {
+          state.selectedRoomId = Number(g.dataset.roomId);
+          renderAll();
+        }
+      });
+      document.getElementById('roomTableBody').addEventListener('click', (e) => {
+        const tr = e.target.closest('[data-room-id]');
+        if (tr) {
+          state.selectedRoomId = Number(tr.dataset.roomId);
+          renderAll();
+        }
+      });
+
+      // Inspector Twin Commands
+      document.getElementById('btnDispatchRN').addEventListener('click', () => {
+        const r = state.rooms.find(rm => rm.id === state.selectedRoomId);
+        if (!r || !r.occupied) return;
+        r.hr = Math.max(76, r.hr - 14);
+        r.spo2 = Math.min(98, r.spo2 + 3);
+        r.sbp = Math.max(112, r.sbp + 8);
+        r.rr = Math.max(16, r.rr - 3);
+        r.acvpu = 'A';
+        addLog(`RN intervention in Room ${r.id} (${r.patientId}): vitals stabilized.`, 'info');
+        showToast(`RN dispatched to Room ${r.id}`, 'success');
+        renderAll();
+      });
+
+      document.getElementById('btnToggleO2').addEventListener('click', () => {
+        const r = state.rooms.find(rm => rm.id === state.selectedRoomId);
+        if (!r || !r.occupied) return;
+        r.onO2 = !r.onO2;
+        if (r.onO2) r.spo2 = Math.min(98, r.spo2 + 3);
+        addLog(`Room ${r.id} (${r.patientId}) supplemental O₂ ${r.onO2 ? 'started' : 'weaned'}.`, 'info');
+        renderAll();
+      });
+
+      document.getElementById('btnCoolRoom').addEventListener('click', () => {
+        const r = state.rooms.find(rm => rm.id === state.selectedRoomId);
+        if (!r) return;
+        r.envTemp = clamp(+(r.envTemp - 1.0).toFixed(1), 18, 28);
+        if (r.isolation) r.pressure = clamp(+(r.pressure - 0.8).toFixed(1), -5, 3);
+        addLog(`HVAC command sent to Room ${r.id}: Temp ${r.envTemp}°C, Pressure ${r.pressure} Pa.`, 'info');
+        renderAll();
+      });
+
+      document.getElementById('btnDischarge').addEventListener('click', () => {
+        const r = state.rooms.find(rm => rm.id === state.selectedRoomId);
+        if (!r || !r.occupied) return;
+        addLog(`Discharged/transferred ${r.patientId} from Room ${r.id}. Bed now vacant.`, 'info');
+        r.occupied = false;
+        r.patientId = null;
+        r.diagnosis = null;
+        showToast(`Room ${r.id} cleared for admission`, 'info');
+        renderAll();
+      });
+
+      document.getElementById('btnAdmitHere').addEventListener('click', () => {
+        const r = state.rooms.find(rm => rm.id === state.selectedRoomId);
+        if (!r || r.occupied) return;
+        admitPatientToRoom(r, true);
+        showToast(`Admitted patient to Room ${r.id}`, 'success');
+        renderAll();
+      });
+
+      document.getElementById('btnClearLog').addEventListener('click', () => {
+        state.logs = [];
+        renderLogs();
+      });
+
+      // Data I/O Buttons
+      document.getElementById('btnExportCSV').addEventListener('click', exportCSV);
+      document.getElementById('btnExportJSON').addEventListener('click', exportJSON);
+      document.getElementById('btnLoadSampleCSV').addEventListener('click', downloadSampleCSV);
+      document.getElementById('btnImportData').addEventListener('click', () => {
+        document.getElementById('fileImportInput').click();
+      });
+      document.getElementById('fileImportInput').addEventListener('change', (e) => {
+        handleFileImport(e.target.files[0]);
+        e.target.value = '';
+      });
+    });
+  </script>
+</body>
+</html>
